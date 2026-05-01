@@ -10,3 +10,8 @@ The first public release is not ready until these gates are satisfied:
 - Release checksums are signed.
 - A minimal external Terraform project can run `terraform init` with
   `source = "bastet-cat/pxgrid"`.
+
+Before the first Registry release, local development should validate
+`source = "bastet-cat/pxgrid"` with Terraform CLI `dev_overrides` and
+`terraform plan`; `terraform init` is expected to query the Registry and fail
+until a public version exists.

@@ -47,7 +47,7 @@ func (p *pxGridProvider) Metadata(_ context.Context, _ provider.MetadataRequest,
 func (p *pxGridProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	// endpoint + auth (token ou user/pass) + ssh (opcional, para recursos que exijam).
 	resp.Schema = schema.Schema{
-		Description: "Provider px-grid para Proxmox VE (SDN, containers, usuários e tokens).",
+		Description: "Provider pxgrid para Proxmox VE bootstrap workflows, host networking, SDN lab setup, and LXC initialization.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
 				Required:    true,
@@ -170,7 +170,7 @@ func (p *pxGridProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	hasUser := username != ""
 	hasPass := password != ""
 
-	tflog.Debug(ctx, "px-grid provider credentials check", map[string]interface{}{
+	tflog.Debug(ctx, "pxgrid provider credentials check", map[string]interface{}{
 		"has_username": hasUser,
 		"has_password": hasPass,
 		"has_token":    apiToken != "",
@@ -187,7 +187,7 @@ func (p *pxGridProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	defaultClient = client
 	resp.ResourceData = client
 	resp.DataSourceData = client
-	tflog.Debug(ctx, "px-grid provider configured", map[string]interface{}{"endpoint": endpoint})
+	tflog.Debug(ctx, "pxgrid provider configured", map[string]interface{}{"endpoint": endpoint})
 }
 
 func (p *pxGridProvider) Resources(_ context.Context) []func() resource.Resource {

@@ -35,12 +35,16 @@ terraform {
 ## Development
 
 ```bash
-go test ./...
+make build
+make test
 ```
 
 The provider implementation is being migrated from the reference lab
 repository. Before adding releases, preserve the decisions and trade-offs
 listed in [docs/decision-coverage.md](docs/decision-coverage.md).
+
+For local Terraform development before the first Registry release, use the
+development override flow in [docs/development.md](docs/development.md).
 
 ## Differentiation
 

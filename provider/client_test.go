@@ -36,9 +36,9 @@ func TestClient_UserTokenLifecycle(t *testing.T) {
 			w.Write([]byte(`{"data":null}`))
 		default:
 			if strings.HasPrefix(r.URL.Path, "/api2/json/access/users/") {
-				if strings.Contains(r.URL.Path, "/token/px-grid-token") {
+				if strings.Contains(r.URL.Path, "/token/pxgrid-token") {
 					gotToken = true
-					w.Write([]byte(`{"data":{"tokenid":"codex@pve!px-grid-token","value":"toksecret"}}`))
+					w.Write([]byte(`{"data":{"tokenid":"codex@pve!pxgrid-token","value":"toksecret"}}`))
 					return
 				}
 				if strings.Contains(r.URL.Path, "codex") {
@@ -65,7 +65,7 @@ func TestClient_UserTokenLifecycle(t *testing.T) {
 	if err := client.AddACL(ctx, "/", user.UserID, "Administrator", true); err != nil {
 		t.Fatalf("add acl: %v", err)
 	}
-	tok, err := client.CreateToken(ctx, user.UserID, "px-grid-token", "comment", 0, false)
+	tok, err := client.CreateToken(ctx, user.UserID, "pxgrid-token", "comment", 0, false)
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}

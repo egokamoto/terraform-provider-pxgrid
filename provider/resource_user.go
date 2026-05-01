@@ -73,7 +73,7 @@ func (r *UserResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Optional:    true,
 				Computed:    true,
 				Description: "Comentário.",
-				Default:     stringdefault.StaticString("Managed by px-grid"),
+				Default:     stringdefault.StaticString("Managed by pxgrid"),
 			},
 			"enabled": schema.BoolAttribute{
 				Optional:    true,
