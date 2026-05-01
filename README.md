@@ -57,3 +57,9 @@ development override flow in [docs/development.md](docs/development.md).
 
 For general-purpose VM, storage, HA, cluster and broad Proxmox resource
 coverage, prefer `bpg/proxmox`.
+
+Read more:
+
+- [Differentiation](docs/differentiation.md)
+- [Trade-offs and operational notes](docs/tradeoffs.md)
+- [Acceptance and lab validation](docs/acceptance.md)
