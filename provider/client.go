@@ -1116,6 +1116,9 @@ type Container struct {
 	VMID     int64  `json:"vmid"`
 	Node     string `json:"node"`
 	Hostname string `json:"hostname"`
+	Cores    int64  `json:"cores"`
+	Memory   int64  `json:"memory"`
+	Swap     int64  `json:"swap"`
 }
 
 func (c *Client) CreateContainer(ctx context.Context, node string, params url.Values) error {
@@ -1165,11 +1168,83 @@ func (c *Client) GetContainer(ctx context.Context, node string, vmid int64) (*Co
 		return nil, fmt.Errorf("decode container: %w", err)
 	}
 	hostname, _ := cfg["hostname"].(string)
+	cores := parseConfigInt64(cfg["cores"])
+	memory := parseConfigInt64(cfg["memory"])
+	swap := parseConfigInt64(cfg["swap"])
 	return &Container{
 		VMID:     vmid,
 		Node:     node,
 		Hostname: hostname,
+		Cores:    cores,
+		Memory:   memory,
+		Swap:     swap,
 	}, nil
+}
+
+func (c *Client) UpdateContainerConfig(ctx context.Context, node string, vmid int64, form url.Values) error {
+	if err := c.ensureAuth(ctx); err != nil {
+		return err
+	}
+	if len(form) == 0 {
+		return nil
+	}
+	path := fmt.Sprintf("/nodes/%s/lxc/%d/config", url.PathEscape(node), vmid)
+	resp, err := c.do(ctx, http.MethodPut, path, strings.NewReader(form.Encode()), func(r *http.Request) {
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	})
+	if err != nil {
+		return err
+	}
+	return c.waitForOptionalTask(ctx, node, resp, 5*time.Minute)
+}
+
+func (c *Client) UpdateContainerSizing(ctx context.Context, node string, vmid int64, cores, memory, swap int64) error {
+	form := url.Values{}
+	if cores > 0 {
+		form.Set("cores", fmt.Sprintf("%d", cores))
+	}
+	if memory > 0 {
+		form.Set("memory", fmt.Sprintf("%d", memory))
+	}
+	if swap >= 0 {
+		form.Set("swap", fmt.Sprintf("%d", swap))
+	}
+	return c.UpdateContainerConfig(ctx, node, vmid, form)
+}
+
+func (c *Client) StartContainer(ctx context.Context, node string, vmid int64) error {
+	if err := c.ensureAuth(ctx); err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/nodes/%s/lxc/%d/status/start", url.PathEscape(node), vmid)
+	resp, err := c.do(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return err
+	}
+	return c.waitForOptionalTask(ctx, node, resp, 5*time.Minute)
+}
+
+func parseConfigInt64(v interface{}) int64 {
+	switch value := v.(type) {
+	case nil:
+		return 0
+	case int:
+		return int64(value)
+	case int32:
+		return int64(value)
+	case int64:
+		return value
+	case float64:
+		return int64(value)
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err == nil {
+			return parsed
+		}
+		return 0
+	default:
+		return 0
+	}
 }
 
 func (c *Client) DeleteContainer(ctx context.Context, node string, vmid int64) error {

@@ -16,8 +16,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -81,10 +85,16 @@ func (r *ContainerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"vmid": schema.Int64Attribute{
 				Required:    true,
 				Description: "ID do container.",
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+				},
 			},
 			"node_name": schema.StringAttribute{
 				Required:    true,
 				Description: "Nó alvo.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"hostname": schema.StringAttribute{
 				Required:    true,
@@ -93,12 +103,18 @@ func (r *ContainerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"template_file_id": schema.StringAttribute{
 				Required:    true,
 				Description: "Template LXC (ex.: local:vztmpl/debian-12...).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"os_type": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
 				Description: "Tipo de OS (default debian).",
 				Default:     stringdefault.StaticString("debian"),
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"cores": schema.Int64Attribute{
 				Optional:    true,
@@ -169,6 +185,9 @@ func (r *ContainerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Computed:    true,
 				Description: "Container não privilegiado (default true).",
 				Default:     booldefault.StaticBool(true),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.RequiresReplace(),
+				},
 			},
 			"start_on_boot": schema.BoolAttribute{
 				Optional:    true,
@@ -264,7 +283,7 @@ func (r *ContainerResource) Create(ctx context.Context, req resource.CreateReque
 			return
 		}
 	}
-	params := buildLXCParams(plan)
+	params := buildLXCParams(ctx, plan)
 	if err := client.CreateContainer(ctx, plan.NodeName.ValueString(), params); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusInternalServerError && strings.Contains(strings.ToLower(apiErr.Body), "already exists") {
@@ -346,18 +365,117 @@ func (r *ContainerResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 	state.Hostname = types.StringValue(c.Hostname)
+	state.Cores = types.Int64Value(c.Cores)
+	state.Memory = types.Int64Value(c.Memory)
+	state.Swap = types.Int64Value(c.Swap)
 	state.ID = types.StringValue(fmt.Sprintf("%d", vmid))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *ContainerResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Não suportado neste protótipo: recriação via replace se mudar vmid/host.
+	var state containerModel
 	var plan containerModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.AddError("Operação não suportada", "Atualização de LXC não implementada; force replace.")
+	if containerNet0Changed(state, plan) {
+		resp.Diagnostics.AddError("Reconstrução de net0 não implementada", "Mudanças em bridge, vnet, ipv4_address, ipv4_gateway ou vlan_id exigem reconstrução de net0, que ainda não está implementada.")
+		return
+	}
+	if changed := containerUnsupportedStorageChanged(state, plan); len(changed) > 0 {
+		resp.Diagnostics.AddError("Operação não suportada", fmt.Sprintf("Atualização de %s ainda não está implementada.", strings.Join(changed, ", ")))
+		return
+	}
+	client := r.client
+	if client == nil && defaultClient != nil {
+		client = defaultClient
+	}
+	if client == nil {
+		resp.Diagnostics.AddError("Provider não configurado", "Client não encontrado.")
+		return
+	}
+	vmid := plan.VMID.ValueInt64()
+	configForm := buildLXCUpdateConfig(ctx, plan)
+	if err := client.UpdateContainerConfig(ctx, plan.NodeName.ValueString(), vmid, configForm); err != nil {
+		resp.Diagnostics.AddError("Erro ao atualizar LXC", err.Error())
+		return
+	}
+	if !state.Started.Equal(plan.Started) {
+		if plan.Started.ValueBool() {
+			if err := client.StartContainer(ctx, plan.NodeName.ValueString(), vmid); err != nil {
+				resp.Diagnostics.AddError("Erro ao iniciar LXC", err.Error())
+				return
+			}
+		} else {
+			if err := client.StopContainer(ctx, plan.NodeName.ValueString(), vmid); err != nil {
+				resp.Diagnostics.AddError("Erro ao parar LXC", err.Error())
+				return
+			}
+		}
+	}
+	c, err := client.GetContainer(ctx, plan.NodeName.ValueString(), vmid)
+	if err != nil {
+		resp.Diagnostics.AddError("Erro ao ler LXC", err.Error())
+		return
+	}
+	plan.ID = types.StringValue(fmt.Sprintf("%d", vmid))
+	plan.Hostname = types.StringValue(c.Hostname)
+	plan.Cores = types.Int64Value(c.Cores)
+	plan.Memory = types.Int64Value(c.Memory)
+	plan.Swap = types.Int64Value(c.Swap)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func buildLXCUpdateConfig(ctx context.Context, plan containerModel) url.Values {
+	form := url.Values{}
+	form.Set("hostname", plan.Hostname.ValueString())
+	form.Set("cores", fmt.Sprintf("%d", plan.Cores.ValueInt64()))
+	form.Set("memory", fmt.Sprintf("%d", plan.Memory.ValueInt64()))
+	form.Set("swap", fmt.Sprintf("%d", plan.Swap.ValueInt64()))
+	form.Set("onboot", boolToIntString(plan.StartOnBoot.ValueBool()))
+	if plan.Nesting.ValueBool() {
+		form.Set("features", "nesting=1")
+	} else {
+		form.Set("features", "nesting=0")
+	}
+	if !plan.StartupOrder.IsNull() {
+		form.Set("startup", fmt.Sprintf("order=%d", plan.StartupOrder.ValueInt64()))
+	}
+	if !plan.DNSServers.IsNull() && !plan.DNSServers.IsUnknown() {
+		var dns []string
+		plan.DNSServers.ElementsAs(ctx, &dns, false)
+		form.Set("nameserver", strings.Join(dns, " "))
+	}
+	if !plan.Tags.IsNull() && !plan.Tags.IsUnknown() {
+		var tags []string
+		plan.Tags.ElementsAs(ctx, &tags, false)
+		form.Set("tags", strings.Join(tags, ";"))
+	}
+	if !plan.SSHKey.IsNull() {
+		form.Set("ssh-public-keys", plan.SSHKey.ValueString())
+	}
+	return form
+}
+
+func containerNet0Changed(state, plan containerModel) bool {
+	return !state.Bridge.Equal(plan.Bridge) ||
+		!state.VNet.Equal(plan.VNet) ||
+		!state.IPv4Address.Equal(plan.IPv4Address) ||
+		!state.IPv4Gateway.Equal(plan.IPv4Gateway) ||
+		!state.VLANID.Equal(plan.VLANID)
+}
+
+func containerUnsupportedStorageChanged(state, plan containerModel) []string {
+	var changed []string
+	if !state.DiskSize.Equal(plan.DiskSize) {
+		changed = append(changed, "disk_size")
+	}
+	if !state.DatastoreID.Equal(plan.DatastoreID) {
+		changed = append(changed, "datastore_id")
+	}
+	return changed
 }
 
 func (r *ContainerResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -398,7 +516,7 @@ func (r *ContainerResource) ImportState(ctx context.Context, req resource.Import
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }
 
-func buildLXCParams(plan containerModel) url.Values {
+func buildLXCParams(ctx context.Context, plan containerModel) url.Values {
 	params := url.Values{}
 	params.Set("vmid", fmt.Sprintf("%d", plan.VMID.ValueInt64()))
 	params.Set("hostname", plan.Hostname.ValueString())
@@ -437,7 +555,7 @@ func buildLXCParams(plan containerModel) url.Values {
 	// DNS
 	if !plan.DNSServers.IsNull() && !plan.DNSServers.IsUnknown() {
 		var dns []string
-		plan.DNSServers.ElementsAs(context.Background(), &dns, false)
+		plan.DNSServers.ElementsAs(ctx, &dns, false)
 		if len(dns) > 0 {
 			params.Set("nameserver", strings.Join(dns, " "))
 		}
@@ -456,7 +574,7 @@ func buildLXCParams(plan containerModel) url.Values {
 	// Tags
 	if !plan.Tags.IsNull() {
 		var tags []string
-		plan.Tags.ElementsAs(context.Background(), &tags, false)
+		plan.Tags.ElementsAs(ctx, &tags, false)
 		if len(tags) > 0 {
 			params.Set("tags", strings.Join(tags, ";"))
 		}
