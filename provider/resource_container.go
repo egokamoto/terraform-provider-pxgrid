@@ -283,7 +283,7 @@ func (r *ContainerResource) Create(ctx context.Context, req resource.CreateReque
 			return
 		}
 	}
-	params := buildLXCParams(plan)
+	params := buildLXCParams(ctx, plan)
 	if err := client.CreateContainer(ctx, plan.NodeName.ValueString(), params); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusInternalServerError && strings.Contains(strings.ToLower(apiErr.Body), "already exists") {
@@ -516,7 +516,7 @@ func (r *ContainerResource) ImportState(ctx context.Context, req resource.Import
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }
 
-func buildLXCParams(plan containerModel) url.Values {
+func buildLXCParams(ctx context.Context, plan containerModel) url.Values {
 	params := url.Values{}
 	params.Set("vmid", fmt.Sprintf("%d", plan.VMID.ValueInt64()))
 	params.Set("hostname", plan.Hostname.ValueString())
@@ -555,7 +555,7 @@ func buildLXCParams(plan containerModel) url.Values {
 	// DNS
 	if !plan.DNSServers.IsNull() && !plan.DNSServers.IsUnknown() {
 		var dns []string
-		plan.DNSServers.ElementsAs(context.Background(), &dns, false)
+		plan.DNSServers.ElementsAs(ctx, &dns, false)
 		if len(dns) > 0 {
 			params.Set("nameserver", strings.Join(dns, " "))
 		}
@@ -574,7 +574,7 @@ func buildLXCParams(plan containerModel) url.Values {
 	// Tags
 	if !plan.Tags.IsNull() {
 		var tags []string
-		plan.Tags.ElementsAs(context.Background(), &tags, false)
+		plan.Tags.ElementsAs(ctx, &tags, false)
 		if len(tags) > 0 {
 			params.Set("tags", strings.Join(tags, ";"))
 		}
